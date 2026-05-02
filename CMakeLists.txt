@@ -1,8 +1,9 @@
 cmake_minimum_required(VERSION 3.14)
-project(voiceprint CXX)
+project(voiceprint C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "" FORCE)
 
 # 默认编译类型为 Release，以获得最佳性能
 if(NOT CMAKE_BUILD_TYPE)
@@ -11,38 +12,79 @@ endif()
 
 # 查找依赖库
 find_package(CURL REQUIRED)
+find_package(Threads REQUIRED)
 
-# 查找 PortAudio（Homebrew 默认不提供 CMake 包）
-if(NOT PORTAUDIO_ROOT)
-  if(APPLE)
-    set(PORTAUDIO_ROOT "/opt/homebrew")
-  elseif(UNIX)
-    set(PORTAUDIO_ROOT "/usr/local")
-  elseif(WIN32)
-    set(PORTAUDIO_ROOT "C:/Program Files/PortAudio")
+# PortAudio：Linux 下从源码构建 ALSA-only 静态库，避免系统 PortAudio 的
+# JACK/PulseAudio backend 影响 register_speaker 运行。仓库地址和 tag 可在
+# 构建时用 -DPORTAUDIO_GIT_REPOSITORY=... / -DPORTAUDIO_GIT_TAG=... 覆盖。
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  include(FetchContent)
+  find_package(ALSA REQUIRED)
+
+  set(PORTAUDIO_GIT_REPOSITORY
+    "https://gitee.com/spacemit-robotics/portaudio.git"
+    CACHE STRING "PortAudio git repository"
+  )
+  set(PORTAUDIO_GIT_TAG
+    "v19.7.0"
+    CACHE STRING "PortAudio git tag or commit"
+  )
+
+  set(PA_USE_ALSA ON CACHE BOOL "" FORCE)
+  set(PA_USE_JACK OFF CACHE BOOL "" FORCE)
+  set(PA_USE_PULSEAUDIO OFF CACHE BOOL "" FORCE)
+  set(PA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  set(PA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(PA_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+  set(PA_BUILD_STATIC ON CACHE BOOL "" FORCE)
+
+  FetchContent_Declare(portaudio
+    GIT_REPOSITORY ${PORTAUDIO_GIT_REPOSITORY}
+    GIT_TAG ${PORTAUDIO_GIT_TAG}
+  )
+  FetchContent_MakeAvailable(portaudio)
+
+  set(PORTAUDIO_TARGET portaudio_static)
+  set(PORTAUDIO_INCLUDE_DIR ${portaudio_SOURCE_DIR}/include)
+
+  if(TARGET portaudio_static)
+    target_compile_options(portaudio_static PRIVATE -w)
   endif()
-endif()
+else()
+  # 非 Linux 独立构建保留系统 PortAudio 查找逻辑（Homebrew 默认不提供 CMake 包）
+  if(NOT PORTAUDIO_ROOT)
+    if(APPLE)
+      set(PORTAUDIO_ROOT "/opt/homebrew")
+    elseif(WIN32)
+      set(PORTAUDIO_ROOT "C:/Program Files/PortAudio")
+    else()
+      set(PORTAUDIO_ROOT "/usr/local")
+    endif()
+  endif()
 
-find_path(PORTAUDIO_INCLUDE_DIR
-  NAMES portaudio.h
-  PATHS
-    ${PORTAUDIO_ROOT}/include
-    /usr/local/include
-    /opt/homebrew/include
-    /usr/include
-)
+  find_path(PORTAUDIO_INCLUDE_DIR
+    NAMES portaudio.h
+    PATHS
+      ${PORTAUDIO_ROOT}/include
+      /usr/local/include
+      /opt/homebrew/include
+      /usr/include
+  )
 
-find_library(PORTAUDIO_LIBRARY
-  NAMES portaudio
-  PATHS
-    ${PORTAUDIO_ROOT}/lib
-    /usr/local/lib
-    /opt/homebrew/lib
-    /usr/lib
-)
+  find_library(PORTAUDIO_LIBRARY
+    NAMES portaudio
+    PATHS
+      ${PORTAUDIO_ROOT}/lib
+      /usr/local/lib
+      /opt/homebrew/lib
+      /usr/lib
+  )
 
-if(NOT PORTAUDIO_INCLUDE_DIR OR NOT PORTAUDIO_LIBRARY)
-  message(FATAL_ERROR "PortAudio not found. 请安装 PortAudio 或设置 PORTAUDIO_ROOT/PORTAUDIO_INCLUDE_DIR/PORTAUDIO_LIBRARY.")
+  if(NOT PORTAUDIO_INCLUDE_DIR OR NOT PORTAUDIO_LIBRARY)
+    message(FATAL_ERROR "PortAudio not found. 请安装 PortAudio 或设置 PORTAUDIO_ROOT/PORTAUDIO_INCLUDE_DIR/PORTAUDIO_LIBRARY.")
+  endif()
+
+  set(PORTAUDIO_TARGET ${PORTAUDIO_LIBRARY})
 endif()
 
 # 设置二进制文件和库文件的输出目录
@@ -197,9 +239,10 @@ target_link_libraries(voiceprint
   PUBLIC
     ${ONNXRUNTIME_LIB}
     ${CURL_LIBRARIES}
+    Threads::Threads
 )
 if(UNIX AND NOT APPLE)
-  target_link_libraries(voiceprint PUBLIC m pthread)
+  target_link_libraries(voiceprint PUBLIC m)
 endif()
 
 
@@ -216,7 +259,7 @@ target_include_directories(register_speaker PRIVATE ${PORTAUDIO_INCLUDE_DIR})
 target_link_libraries(register_speaker
   PRIVATE
     -Wl,--whole-archive voiceprint -Wl,--no-whole-archive
-    ${PORTAUDIO_LIBRARY}
+    ${PORTAUDIO_TARGET}
 )
 
 add_executable(identify_speaker tools/identify_speaker.cpp)

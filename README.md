@@ -19,12 +19,22 @@
 ### 2.1. 安装依赖
 
 - **编译环境**：CMake >= 3.14，C++17 编译器（GCC 7+、Clang 5+、MSVC 2017+）。
-- **必选**：libcurl（模型自动下载）、PortAudio（实时录音）。
+- **必选**：libcurl（模型自动下载）、ALSA 开发库和 git（Linux 下拉取并编译 PortAudio
+  v19.7.0，实时录音使用）。
 
 ```bash
 sudo apt-get update
 sudo apt-get install -y build-essential cmake \
-  libcurl4-openssl-dev portaudio19-dev
+  libcurl4-openssl-dev libasound2-dev git
+```
+
+Linux 下 `register_speaker` 会通过 CMake `FetchContent` 拉取 PortAudio v19.7.0，并只启用
+ALSA backend 静态链接到可执行文件；构建产物不再依赖系统 `libportaudio.so.2`，但仍依赖系统
+ALSA 运行库 `libasound.so.2`。默认源码地址为 Gitee fork
+`https://gitee.com/spacemit-robotics/portaudio.git`，可用 CMake 参数覆盖：
+
+```bash
+cmake -DPORTAUDIO_GIT_REPOSITORY=<repo-url> -DPORTAUDIO_GIT_TAG=<tag-or-commit> ..
 ```
 
 ONNX Runtime 若本地未找到，CMake 会自动从 GitHub 下载 v1.16.3 预编译包。
@@ -159,7 +169,7 @@ make -j$(nproc)
 
 ### 3.2. API 使用
 
-**C++**：头文件 `include/vp_service.h` 为唯一 API 入口，实现为 PIMPL，无额外依赖。在业务代码中 `#include "vp_service.h"`，链接 `libvoiceprint.a`（及 ONNX Runtime、libcurl、PortAudio 等），即可使用。
+**C++**：头文件 `include/vp_service.h` 为唯一 API 入口，实现为 PIMPL，无额外依赖。在业务代码中 `#include "vp_service.h"`，链接 `libvoiceprint.a`（及 ONNX Runtime、libcurl 等），即可使用。实时录音示例 `register_speaker` 在 Linux 下会静态链接自编 PortAudio。
 
 ```cpp
 #include "vp_service.h"
