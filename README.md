@@ -215,7 +215,12 @@ target_include_directories(your_target PRIVATE ${VOICEPRINT_SOURCE_DIR}/include)
 
 ## 4. 常见问题
 
-暂无。如有问题可提交 Issue。
+| 现象 | 可能原因 | 处理 |
+| --- | --- | --- |
+| `UNKNOWN: No match above threshold` | 分数低于阈值、注册样本不足或环境不同 | 增加注册样本，降低噪声，必要时调整 `--threshold`。 |
+| 同一人验证偶发失败 | 语音太短、音量过低或麦克风位置变化大 | 使用 2-5 秒清晰语音，并保持注册和识别设备一致。 |
+| 不同人分数偏高 | 注册样本质量差或阈值过低 | 提高阈值，重新采集注册样本。 |
+| 找不到录音设备 | PortAudio 默认设备不正确 | `register_speaker -l` 列出设备，再用 `-i` 指定。 |
 
 ## 5. 版本与发布
 
