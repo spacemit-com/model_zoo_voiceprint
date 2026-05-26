@@ -27,7 +27,8 @@ struct Wave {
 
 class WaveReader {
 public:
-    static std::unique_ptr<Wave> ReadFile(const std::string& filename);
+    static std::unique_ptr<Wave> ReadFile(const std::string& filename,
+        int speech_channel = 1);
     static std::vector<float> Resample(const std::vector<float>& samples,
         int input_rate, int output_rate);
 };
