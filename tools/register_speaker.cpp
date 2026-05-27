@@ -6,9 +6,12 @@
  */
 
 #include <cmath>
+#include <cerrno>
 #include <cstring>
+#include <cstdlib>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <utility>
 #include <vector>
@@ -42,6 +45,51 @@ static bool RecordSamples(AudioRecorder& recorder,
     return true;
 }
 
+static bool ParseIntOption(const char* option, const char* value, int* out) {
+    if (!value || !out) return false;
+
+    errno = 0;
+    char* end = nullptr;
+    long parsed = std::strtol(value, &end, 10);
+    if (errno != 0 || end == value || *end != '\0'
+            || parsed < std::numeric_limits<int>::min()
+            || parsed > std::numeric_limits<int>::max()) {
+        std::cerr << "Error: " << option << " requires an integer value\n";
+        return false;
+    }
+
+    *out = static_cast<int>(parsed);
+    return true;
+}
+
+static bool RegisterAveragedEmbedding(SpacemiT::VpEngine& engine,
+        const std::string& speaker_name,
+        const std::vector<std::vector<float>>& embeddings) {
+    if (embeddings.empty()) return false;
+
+    const int dim = static_cast<int>(embeddings[0].size());
+    std::vector<float> avg(static_cast<size_t>(dim), 0.0f);
+    int count = 0;
+    for (const auto& e : embeddings) {
+        if (static_cast<int>(e.size()) != dim) continue;
+        for (int j = 0; j < dim; j++) {
+            avg[static_cast<size_t>(j)] += e[static_cast<size_t>(j)];
+        }
+        count++;
+    }
+    if (count == 0) return false;
+    for (float& v : avg) v /= count;
+
+    float norm = 0.0f;
+    for (float v : avg) norm += v * v;
+    norm = std::sqrt(norm);
+    if (norm > 0.0f) {
+        for (float& v : avg) v /= norm;
+    }
+
+    return engine.RegisterWithEmbedding(speaker_name, avg);
+}
+
 void print_usage(const char* prog) {
     std::cout << "Usage: " << prog << " [OPTIONS] -n NAME [audio1.wav ...]\n";
     std::cout << "\nRegister a speaker with audio files or live recording.\n\n";
@@ -54,6 +102,7 @@ void print_usage(const char* prog) {
     std::cout << "  -i, --input-device N  Select input device by index\n";
     std::cout << "  -r, --sample-rate N   Recording sample rate (default: 16000)\n";
     std::cout << "  -c, --channels N      Number of recording channels (default: 1)\n";
+    std::cout << "  --speech-channel N    1-based speech channel for recording/WAV input (default: 1)\n";
     std::cout << "  -h, --help            Show this help message\n";
     std::cout << "\nExamples:\n";
     std::cout << "  " << prog << " -l                              # List devices\n";
@@ -76,6 +125,7 @@ int main(int argc, char* argv[]) {
     int device_index = -1;
     int recording_sample_rate = kTargetSampleRate;
     int recording_channels = 1;
+    int speech_channel = 1;
     std::vector<std::string> audio_files;
 
     for (int i = 1; i < argc; i++) {
@@ -98,7 +148,9 @@ int main(int argc, char* argv[]) {
             }
         } else if (strcmp(argv[i], "-t") == 0 || strcmp(argv[i], "--threads") == 0) {
             if (i + 1 < argc) {
-                num_threads = std::stoi(argv[++i]);
+                const char* option = argv[i];
+                const char* value = argv[++i];
+                if (!ParseIntOption(option, value, &num_threads)) return 1;
             } else {
                 std::cerr << "Error: -t requires a number\n";
                 return 1;
@@ -109,23 +161,38 @@ int main(int argc, char* argv[]) {
             list_devices = true;
         } else if (strcmp(argv[i], "-i") == 0 || strcmp(argv[i], "--input-device") == 0) {
             if (i + 1 < argc) {
-                device_index = std::stoi(argv[++i]);
+                const char* option = argv[i];
+                const char* value = argv[++i];
+                if (!ParseIntOption(option, value, &device_index)) return 1;
             } else {
                 std::cerr << "Error: -i requires a device index\n";
                 return 1;
             }
         } else if (strcmp(argv[i], "-r") == 0 || strcmp(argv[i], "--sample-rate") == 0) {
             if (i + 1 < argc) {
-                recording_sample_rate = std::stoi(argv[++i]);
+                const char* option = argv[i];
+                const char* value = argv[++i];
+                if (!ParseIntOption(option, value, &recording_sample_rate)) return 1;
             } else {
                 std::cerr << "Error: -r requires a sample rate\n";
                 return 1;
             }
         } else if (strcmp(argv[i], "-c") == 0 || strcmp(argv[i], "--channels") == 0) {
             if (i + 1 < argc) {
-                recording_channels = std::stoi(argv[++i]);
+                const char* option = argv[i];
+                const char* value = argv[++i];
+                if (!ParseIntOption(option, value, &recording_channels)) return 1;
             } else {
                 std::cerr << "Error: -c requires a channel count\n";
+                return 1;
+            }
+        } else if (strcmp(argv[i], "--speech-channel") == 0) {
+            if (i + 1 < argc) {
+                const char* option = argv[i];
+                const char* value = argv[++i];
+                if (!ParseIntOption(option, value, &speech_channel)) return 1;
+            } else {
+                std::cerr << "Error: --speech-channel requires a channel index\n";
                 return 1;
             }
         } else if (argv[i][0] != '-') {
@@ -169,6 +236,14 @@ int main(int argc, char* argv[]) {
         print_usage(argv[0]);
         return 1;
     }
+    if (recording_channels < 1) {
+        std::cerr << "Error: recording channels must be >= 1\n";
+        return 1;
+    }
+    if (speech_channel < 1) {
+        std::cerr << "Error: --speech-channel must be >= 1\n";
+        return 1;
+    }
 
     bool use_recording = audio_files.empty();
     if (!use_recording && audio_files.size() < static_cast<size_t>(kRecordingRepeats)) {
@@ -203,6 +278,12 @@ int main(int argc, char* argv[]) {
 
     if (use_recording) {
         // Live recording mode
+        if (speech_channel > recording_channels) {
+            std::cerr << "Error: --speech-channel " << speech_channel
+                << " out of range for " << recording_channels
+                << " recording channel(s)\n";
+            return 1;
+        }
         AudioRecorder recorder;
         if (!recorder.Initialize(recording_sample_rate, recording_channels, device_index)) {
             std::cerr << "录音初始化失败: " << recorder.GetLastError() << "\n";
@@ -222,15 +303,17 @@ int main(int argc, char* argv[]) {
             std::vector<float> samples;
             if (!RecordSamples(recorder, samples, i)) return 1;
 
-            // Extract first channel if multi-channel
+            // Extract speech channel if multi-channel
             if (recording_channels > 1) {
                 size_t frames = samples.size() / recording_channels;
                 std::vector<float> mono(frames);
+                const int speech_idx = speech_channel - 1;
                 for (size_t f = 0; f < frames; f++) {
-                    mono[f] = samples[f * recording_channels];
+                    mono[f] = samples[f * recording_channels + speech_idx];
                 }
                 samples = std::move(mono);
-                std::cout << "提取左声道为单声道，样本数: " << samples.size() << "\n";
+                std::cout << "提取 ch" << speech_channel
+                    << " 为单声道，样本数: " << samples.size() << "\n";
             }
 
             // Resample to 16kHz if needed
@@ -251,33 +334,41 @@ int main(int argc, char* argv[]) {
             all_embeddings.push_back(result->GetEmbedding());
         }
 
-        // Register with averaged embeddings via RegisterWithEmbedding
-        // Average them manually
-        if (all_embeddings.empty()) return 1;
-        int dim = static_cast<int>(all_embeddings[0].size());
-        std::vector<float> avg(dim, 0.0f);
-        for (const auto& e : all_embeddings) {
-            for (int j = 0; j < dim; j++) avg[j] += e[j];
-        }
-        for (float& v : avg) v /= all_embeddings.size();
-        // L2 normalize
-        float norm = 0.0f;
-        for (float v : avg) norm += v * v;
-        norm = std::sqrt(norm);
-        if (norm > 0) for (float& v : avg) v /= norm;
-
-        success = engine.RegisterWithEmbedding(speaker_name, avg);
+        success = RegisterAveragedEmbedding(engine, speaker_name, all_embeddings);
     } else {
         // File mode
         std::cout << "Processing " << audio_files.size() << " audio file(s) for speaker '"
             << speaker_name << "'...\n";
 
-        if (audio_files.size() == 1) {
-            std::cout << "  Processing: " << audio_files[0] << "...\n";
-            success = engine.Register(speaker_name, audio_files[0]);
-        } else {
-            success = engine.Register(speaker_name, audio_files);
+        std::vector<std::vector<float>> all_embeddings;
+        for (const auto& audio_file : audio_files) {
+            std::cout << "  Processing: " << audio_file << "...\n";
+            auto wav = SpacemiT::WaveReader::ReadFile(audio_file, speech_channel);
+            if (!wav) {
+                return 1;
+            }
+
+            if (wav->sample_rate != kTargetSampleRate) {
+                std::cout << "重采样 " << wav->sample_rate << " → "
+                    << kTargetSampleRate << " Hz...";
+                wav->samples = SpacemiT::WaveReader::Resample(
+                    wav->samples, wav->sample_rate, kTargetSampleRate);
+                wav->sample_rate = kTargetSampleRate;
+                std::cout << " 样本数: " << wav->samples.size() << "\n";
+            }
+
+            auto result = engine.ExtractEmbedding(wav->samples, kTargetSampleRate);
+            if (!result->IsSuccess()) {
+                std::cerr << "生成嵌入失败: " << result->GetErrorMessage() << "\n";
+                return 1;
+            }
+            std::cout << "Embedding RTF: "
+                << std::fixed << std::setprecision(4)
+                << result->GetRTF() << "\n";
+            all_embeddings.push_back(result->GetEmbedding());
         }
+
+        success = RegisterAveragedEmbedding(engine, speaker_name, all_embeddings);
     }
 
     if (!success) {

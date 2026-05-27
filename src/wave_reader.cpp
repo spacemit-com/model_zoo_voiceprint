@@ -148,7 +148,13 @@ std::vector<float> WaveReader::Resample(const std::vector<float>& samples,
     return ResampleMono(samples, input_rate, output_rate);
 }
 
-std::unique_ptr<Wave> WaveReader::ReadFile(const std::string& filename) {
+std::unique_ptr<Wave> WaveReader::ReadFile(const std::string& filename,
+        int speech_channel) {
+    if (speech_channel < 1) {
+        std::cerr << "Invalid speech channel: " << speech_channel << std::endl;
+        return nullptr;
+    }
+
     std::ifstream file(filename, std::ios::binary);
     if (!file) {
         std::cerr << "Failed to open file: " << filename << std::endl;
@@ -234,8 +240,16 @@ std::unique_ptr<Wave> WaveReader::ReadFile(const std::string& filename) {
         return nullptr;
     }
 
-    // Only support mono audio
-    bool had_multiple_channels = header.num_channels != 1;
+    if (header.num_channels == 0) {
+        std::cerr << "Invalid channel count: 0" << std::endl;
+        return nullptr;
+    }
+    if (speech_channel > header.num_channels) {
+        std::cerr << "Speech channel " << speech_channel
+            << " out of range for " << header.num_channels
+            << " channel(s): " << filename << std::endl;
+        return nullptr;
+    }
 
     // Check bits per sample
     if (header.bits_per_sample != 16 && header.bits_per_sample != 8 && header.bits_per_sample != 32) {
@@ -319,14 +333,15 @@ std::unique_ptr<Wave> WaveReader::ReadFile(const std::string& filename) {
         }
     }
 
-    if (had_multiple_channels) {
+    if (header.num_channels != 1) {
         int channels = header.num_channels;
         if (channels > 0) {
             size_t frames = samples.size() / static_cast<size_t>(channels);
             std::vector<float> mono;
             mono.reserve(frames);
+            const size_t selected_channel = static_cast<size_t>(speech_channel - 1);
             for (size_t i = 0; i < frames; ++i) {
-                mono.push_back(samples[i * channels]);
+                mono.push_back(samples[i * channels + selected_channel]);
             }
             samples = std::move(mono);
         }
