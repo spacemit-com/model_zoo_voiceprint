@@ -21,11 +21,18 @@
 - **编译环境**：CMake >= 3.14，C++17 编译器（GCC 7+、Clang 5+、MSVC 2017+）。
 - **必选**：libcurl（模型自动下载）、ALSA 开发库和 git（Linux 下拉取并编译 PortAudio
   v19.7.0，实时录音使用）。
+- **K3 / RISC-V**：建议安装 SDK 声明的系统包 `spacemit-onnxruntime` 和
+  `python3-spacemit-ort`。其中独立 C++ 构建直接使用 `spacemit-onnxruntime`
+  提供的 ONNX Runtime 头文件、`libonnxruntime.so` 和 `libspacemit_ep.so`；
+  `python3-spacemit-ort` 用于 SDK/Python 推理环境。
 
 ```bash
 sudo apt-get update
 sudo apt-get install -y build-essential cmake \
   libcurl4-openssl-dev libasound2-dev git
+
+# K3 / RISC-V
+sudo apt-get install -y spacemit-onnxruntime python3-spacemit-ort
 ```
 
 Linux 下 `register_speaker` 会通过 CMake `FetchContent` 拉取 PortAudio v19.7.0，并只启用
@@ -37,7 +44,12 @@ ALSA 运行库 `libasound.so.2`。默认源码地址为 Gitee fork
 cmake -DPORTAUDIO_GIT_REPOSITORY=<repo-url> -DPORTAUDIO_GIT_TAG=<tag-or-commit> ..
 ```
 
-ONNX Runtime 若本地未找到，CMake 会自动从 GitHub 下载 v1.16.3 预编译包。
+独立 CMake 不会读取 `package.xml`，请先按目标平台安装依赖。默认构建会优先查找
+系统 ONNX Runtime；非 K3 平台若本地未找到，CMake 会自动从 GitHub 下载 v1.16.3
+预编译包。K3 / RISC-V 上使用 `USE_SPACEMIT_EP=ON` 时，CMake 会查找系统安装的
+`spacemit-onnxruntime`，也可以通过 `-DSPACEMIT_ORT_ROOT=<path>` 指向手动解压的
+SpaceMIT ONNX Runtime SDK。设置 `SPACEMIT_ORT_ROOT` 后 CMake 只会在该目录下查找
+ONNX Runtime 与 SpaceMIT EP 文件，请确保路径有效。
 
 ### 2.2. 下载模型
 
@@ -96,8 +108,11 @@ mkdir -p build && cd build
 cmake ..
 make -j$(nproc)
 
-# RISC-V SpaceMIT 构建
+# K3 / RISC-V SpaceMIT 系统包环境：用下面命令替代上面的 cmake ..
 # cmake -DUSE_SPACEMIT_EP=ON ..
+
+# 如果使用手动解压的 SpaceMIT ONNX Runtime SDK
+# cmake -DUSE_SPACEMIT_EP=ON -DSPACEMIT_ORT_ROOT=/path/to/spacemit-ort ..
 
 # 注册说话人
 ./bin/register_speaker -n 张三 sample.wav

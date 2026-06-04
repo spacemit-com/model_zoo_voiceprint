@@ -116,17 +116,115 @@ option(BUILD_TESTS "Build test programs" OFF)
 
 # --- 根据选项决定使用哪个 ONNX Runtime ---
 if(USE_SPACEMIT_EP)
-  set(SPACEMIT_ORT_ROOT "$ENV{HOME}/spacemit-ort.riscv64.2.0.0+beta2")
-  message(STATUS "Using SpaceMIT ONNX Runtime SDK from: ${SPACEMIT_ORT_ROOT}")
+  set(SPACEMIT_ORT_ROOT "" CACHE PATH "Optional root of a manually unpacked SpaceMIT ONNX Runtime SDK")
+  if(NOT SPACEMIT_ORT_ROOT AND DEFINED ENV{SPACEMIT_ORT_ROOT})
+    set(SPACEMIT_ORT_ROOT "$ENV{SPACEMIT_ORT_ROOT}" CACHE PATH
+      "Optional root of a manually unpacked SpaceMIT ONNX Runtime SDK" FORCE)
+  endif()
 
-  # 使用 NO_DEFAULT_PATH 强制 CMake 只在 SDK 目录里查找，避免系统库干扰
-  find_path(ONNXRUNTIME_INCLUDE_DIR NAMES onnxruntime_cxx_api.h PATHS ${SPACEMIT_ORT_ROOT}/include NO_DEFAULT_PATH)
-  find_library(ONNXRUNTIME_LIB NAMES onnxruntime PATHS ${SPACEMIT_ORT_ROOT}/lib NO_DEFAULT_PATH)
-  find_library(SPACEMIT_EP_LIB NAMES spacemit_ep PATHS ${SPACEMIT_ORT_ROOT}/lib NO_DEFAULT_PATH)
+  set(_SPACEMIT_ORT_INCLUDE_HINTS)
+  set(_SPACEMIT_ORT_LIB_HINTS)
+  if(SPACEMIT_ORT_ROOT)
+    message(STATUS "Using SpaceMIT ONNX Runtime root hint: ${SPACEMIT_ORT_ROOT}")
+    if(NOT IS_DIRECTORY "${SPACEMIT_ORT_ROOT}")
+      message(FATAL_ERROR "SPACEMIT_ORT_ROOT does not exist: ${SPACEMIT_ORT_ROOT}")
+    endif()
+    list(APPEND _SPACEMIT_ORT_INCLUDE_HINTS "${SPACEMIT_ORT_ROOT}/include")
+    list(APPEND _SPACEMIT_ORT_LIB_HINTS
+      "${SPACEMIT_ORT_ROOT}/lib"
+      "${SPACEMIT_ORT_ROOT}/lib64"
+    )
+    unset(ONNXRUNTIME_INCLUDE_DIR CACHE)
+    unset(ONNXRUNTIME_LIB CACHE)
+    unset(SPACEMIT_EP_LIB CACHE)
+    find_path(ONNXRUNTIME_INCLUDE_DIR
+      NAMES onnxruntime_cxx_api.h
+      PATHS ${_SPACEMIT_ORT_INCLUDE_HINTS}
+      NO_DEFAULT_PATH
+    )
+    find_library(ONNXRUNTIME_LIB
+      NAMES onnxruntime
+      PATHS ${_SPACEMIT_ORT_LIB_HINTS}
+      NO_DEFAULT_PATH
+    )
+    find_library(SPACEMIT_EP_LIB
+      NAMES spacemit_ep
+      PATHS ${_SPACEMIT_ORT_LIB_HINTS}
+      NO_DEFAULT_PATH
+    )
+  else()
+    message(STATUS "Searching system SpaceMIT ONNX Runtime installation")
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+      pkg_check_modules(ONNXRUNTIME_PC QUIET libonnxruntime)
+      if(NOT ONNXRUNTIME_PC_FOUND)
+        pkg_check_modules(ONNXRUNTIME_ALT_PC QUIET onnxruntime)
+      endif()
+      pkg_check_modules(SPACEMIT_EP_PC QUIET spacemit_ep)
+      if(NOT SPACEMIT_EP_PC_FOUND)
+        pkg_check_modules(SPACEMIT_EP_ALT_PC QUIET libspacemit_ep)
+      endif()
+      list(APPEND _SPACEMIT_ORT_INCLUDE_HINTS
+        ${ONNXRUNTIME_PC_INCLUDE_DIRS}
+        ${ONNXRUNTIME_ALT_PC_INCLUDE_DIRS}
+        ${SPACEMIT_EP_PC_INCLUDE_DIRS}
+        ${SPACEMIT_EP_ALT_PC_INCLUDE_DIRS}
+      )
+      list(APPEND _SPACEMIT_ORT_LIB_HINTS
+        ${ONNXRUNTIME_PC_LIBRARY_DIRS}
+        ${ONNXRUNTIME_ALT_PC_LIBRARY_DIRS}
+        ${SPACEMIT_EP_PC_LIBRARY_DIRS}
+        ${SPACEMIT_EP_ALT_PC_LIBRARY_DIRS}
+      )
+    endif()
+    find_path(ONNXRUNTIME_INCLUDE_DIR
+      NAMES onnxruntime_cxx_api.h
+      HINTS ${_SPACEMIT_ORT_INCLUDE_HINTS}
+      PATHS
+        /usr/include
+        /usr/local/include
+        /opt/spacemit/include
+    )
+    find_library(ONNXRUNTIME_LIB
+      NAMES onnxruntime
+      HINTS ${_SPACEMIT_ORT_LIB_HINTS}
+      PATHS
+        /usr/lib
+        /usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}
+        /lib
+        /lib/${CMAKE_LIBRARY_ARCHITECTURE}
+        /usr/local/lib
+        /opt/spacemit/lib
+    )
+    find_library(SPACEMIT_EP_LIB
+      NAMES spacemit_ep
+      HINTS ${_SPACEMIT_ORT_LIB_HINTS}
+      PATHS
+        /usr/lib
+        /usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}
+        /lib
+        /lib/${CMAKE_LIBRARY_ARCHITECTURE}
+        /usr/local/lib
+        /opt/spacemit/lib
+    )
+  endif()
 
   if(NOT SPACEMIT_EP_LIB OR NOT ONNXRUNTIME_LIB OR NOT ONNXRUNTIME_INCLUDE_DIR)
-    message(FATAL_ERROR "Could not find all required files in ${SPACEMIT_ORT_ROOT}. Please check the path.")
+    message(FATAL_ERROR
+      "SpaceMIT ONNX Runtime files not found. Install the spacemit-onnxruntime "
+      "system package, or pass -DSPACEMIT_ORT_ROOT=/path/to/spacemit-ort. "
+      "Missing: ONNXRUNTIME_INCLUDE_DIR=${ONNXRUNTIME_INCLUDE_DIR}, "
+      "ONNXRUNTIME_LIB=${ONNXRUNTIME_LIB}, SPACEMIT_EP_LIB=${SPACEMIT_EP_LIB}")
   endif()
+
+  set(_SPACEMIT_ORT_RPATH_DIRS)
+  foreach(_spacemit_ort_lib IN ITEMS "${ONNXRUNTIME_LIB}" "${SPACEMIT_EP_LIB}")
+    get_filename_component(_spacemit_ort_lib_dir "${_spacemit_ort_lib}" DIRECTORY)
+    if(_spacemit_ort_lib_dir)
+      list(APPEND _SPACEMIT_ORT_RPATH_DIRS "${_spacemit_ort_lib_dir}")
+    endif()
+  endforeach()
+  list(REMOVE_DUPLICATES _SPACEMIT_ORT_RPATH_DIRS)
 else()
   # --- 这是不使用SpaceMIT时的默认逻辑 ---
   if(NOT ONNXRUNTIME_ROOT)
@@ -269,9 +367,12 @@ target_link_libraries(identify_speaker PRIVATE -Wl,--whole-archive voiceprint -W
 if(USE_SPACEMIT_EP)
   target_link_libraries(register_speaker PRIVATE ${SPACEMIT_EP_LIB})
   target_link_libraries(identify_speaker PRIVATE ${SPACEMIT_EP_LIB})
-  set(CMAKE_INSTALL_RPATH "${SPACEMIT_ORT_ROOT}/lib")
-  target_link_options(register_speaker PRIVATE "-Wl,-rpath,${CMAKE_INSTALL_RPATH}")
-  target_link_options(identify_speaker PRIVATE "-Wl,-rpath,${CMAKE_INSTALL_RPATH}")
+  foreach(_spacemit_ort_rpath_dir IN LISTS _SPACEMIT_ORT_RPATH_DIRS)
+    if(EXISTS "${_spacemit_ort_rpath_dir}")
+      target_link_options(register_speaker PRIVATE "-Wl,-rpath,${_spacemit_ort_rpath_dir}")
+      target_link_options(identify_speaker PRIVATE "-Wl,-rpath,${_spacemit_ort_rpath_dir}")
+    endif()
+  endforeach()
 endif()
 
 # --- 安装 ---
