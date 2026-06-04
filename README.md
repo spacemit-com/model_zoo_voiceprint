@@ -21,10 +21,10 @@
 - **编译环境**：CMake >= 3.14，C++17 编译器（GCC 7+、Clang 5+、MSVC 2017+）。
 - **必选**：libcurl（模型自动下载）、ALSA 开发库和 git（Linux 下拉取并编译 PortAudio
   v19.7.0，实时录音使用）。
-- **K3 / RISC-V**：需要安装 SDK 声明的系统包 `spacemit-onnxruntime` 和
+- **K3 / RISC-V**：建议安装 SDK 声明的系统包 `spacemit-onnxruntime` 和
   `python3-spacemit-ort`。其中独立 C++ 构建直接使用 `spacemit-onnxruntime`
   提供的 ONNX Runtime 头文件、`libonnxruntime.so` 和 `libspacemit_ep.so`；
-  `python3-spacemit-ort` 用于保持与 SDK 依赖环境一致。
+  `python3-spacemit-ort` 用于 SDK/Python 推理环境。
 
 ```bash
 sudo apt-get update

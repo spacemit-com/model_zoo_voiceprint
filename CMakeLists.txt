@@ -154,8 +154,32 @@ if(USE_SPACEMIT_EP)
     )
   else()
     message(STATUS "Searching system SpaceMIT ONNX Runtime installation")
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+      pkg_check_modules(ONNXRUNTIME_PC QUIET libonnxruntime)
+      if(NOT ONNXRUNTIME_PC_FOUND)
+        pkg_check_modules(ONNXRUNTIME_ALT_PC QUIET onnxruntime)
+      endif()
+      pkg_check_modules(SPACEMIT_EP_PC QUIET spacemit_ep)
+      if(NOT SPACEMIT_EP_PC_FOUND)
+        pkg_check_modules(SPACEMIT_EP_ALT_PC QUIET libspacemit_ep)
+      endif()
+      list(APPEND _SPACEMIT_ORT_INCLUDE_HINTS
+        ${ONNXRUNTIME_PC_INCLUDE_DIRS}
+        ${ONNXRUNTIME_ALT_PC_INCLUDE_DIRS}
+        ${SPACEMIT_EP_PC_INCLUDE_DIRS}
+        ${SPACEMIT_EP_ALT_PC_INCLUDE_DIRS}
+      )
+      list(APPEND _SPACEMIT_ORT_LIB_HINTS
+        ${ONNXRUNTIME_PC_LIBRARY_DIRS}
+        ${ONNXRUNTIME_ALT_PC_LIBRARY_DIRS}
+        ${SPACEMIT_EP_PC_LIBRARY_DIRS}
+        ${SPACEMIT_EP_ALT_PC_LIBRARY_DIRS}
+      )
+    endif()
     find_path(ONNXRUNTIME_INCLUDE_DIR
       NAMES onnxruntime_cxx_api.h
+      HINTS ${_SPACEMIT_ORT_INCLUDE_HINTS}
       PATHS
         /usr/include
         /usr/local/include
@@ -163,6 +187,7 @@ if(USE_SPACEMIT_EP)
     )
     find_library(ONNXRUNTIME_LIB
       NAMES onnxruntime
+      HINTS ${_SPACEMIT_ORT_LIB_HINTS}
       PATHS
         /usr/lib
         /usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}
@@ -173,6 +198,7 @@ if(USE_SPACEMIT_EP)
     )
     find_library(SPACEMIT_EP_LIB
       NAMES spacemit_ep
+      HINTS ${_SPACEMIT_ORT_LIB_HINTS}
       PATHS
         /usr/lib
         /usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}
@@ -190,6 +216,15 @@ if(USE_SPACEMIT_EP)
       "Missing: ONNXRUNTIME_INCLUDE_DIR=${ONNXRUNTIME_INCLUDE_DIR}, "
       "ONNXRUNTIME_LIB=${ONNXRUNTIME_LIB}, SPACEMIT_EP_LIB=${SPACEMIT_EP_LIB}")
   endif()
+
+  set(_SPACEMIT_ORT_RPATH_DIRS)
+  foreach(_spacemit_ort_lib IN ITEMS "${ONNXRUNTIME_LIB}" "${SPACEMIT_EP_LIB}")
+    get_filename_component(_spacemit_ort_lib_dir "${_spacemit_ort_lib}" DIRECTORY)
+    if(_spacemit_ort_lib_dir)
+      list(APPEND _SPACEMIT_ORT_RPATH_DIRS "${_spacemit_ort_lib_dir}")
+    endif()
+  endforeach()
+  list(REMOVE_DUPLICATES _SPACEMIT_ORT_RPATH_DIRS)
 else()
   # --- 这是不使用SpaceMIT时的默认逻辑 ---
   if(NOT ONNXRUNTIME_ROOT)
@@ -332,14 +367,12 @@ target_link_libraries(identify_speaker PRIVATE -Wl,--whole-archive voiceprint -W
 if(USE_SPACEMIT_EP)
   target_link_libraries(register_speaker PRIVATE ${SPACEMIT_EP_LIB})
   target_link_libraries(identify_speaker PRIVATE ${SPACEMIT_EP_LIB})
-  if(SPACEMIT_ORT_ROOT)
-    foreach(_spacemit_ort_lib_dir IN LISTS _SPACEMIT_ORT_LIB_HINTS)
-      if(EXISTS "${_spacemit_ort_lib_dir}")
-        target_link_options(register_speaker PRIVATE "-Wl,-rpath,${_spacemit_ort_lib_dir}")
-        target_link_options(identify_speaker PRIVATE "-Wl,-rpath,${_spacemit_ort_lib_dir}")
-      endif()
-    endforeach()
-  endif()
+  foreach(_spacemit_ort_rpath_dir IN LISTS _SPACEMIT_ORT_RPATH_DIRS)
+    if(EXISTS "${_spacemit_ort_rpath_dir}")
+      target_link_options(register_speaker PRIVATE "-Wl,-rpath,${_spacemit_ort_rpath_dir}")
+      target_link_options(identify_speaker PRIVATE "-Wl,-rpath,${_spacemit_ort_rpath_dir}")
+    endif()
+  endforeach()
 endif()
 
 # --- 安装 ---
